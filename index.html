@@ -28,7 +28,7 @@ header h1{font-size:17px;margin:0;flex:1;min-width:0;white-space:nowrap;overflow
 .datebox input::-webkit-calendar-picker-indicator{filter:invert(1)}
 @media (prefers-color-scheme: dark){.datebox input::-webkit-calendar-picker-indicator{filter:none}}
 .diaLev{margin:10px 16px 0;padding:8px 12px;border-radius:10px;background:var(--pri-soft);color:var(--pri);font-size:15px;text-align:center}
-.diaLev b{text-transform:capitalize}
+.diaLev b{}
 .notice{margin:10px 16px 0;padding:10px 12px;border-radius:10px;background:var(--warn-soft);color:var(--warn);font-size:14px}
 main{padding:12px 16px 110px;max-width:720px;margin:0 auto}
 nav{position:fixed;bottom:0;left:0;right:0;z-index:6;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
@@ -81,6 +81,9 @@ textarea.field{min-height:70px;resize:vertical}
 .link{background:none;border:0;color:var(--pri);font-weight:600;padding:8px 0}
 .toast{position:fixed;left:16px;right:16px;bottom:84px;z-index:30;background:var(--ok);color:#fff;border-radius:12px;padding:12px 14px;font-weight:600;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 .toast.err{background:var(--bad)}
+.calc{margin-top:8px;text-align:center;font-size:18px;min-height:26px}.calc b{font-size:24px;color:var(--ok)}
+.err{color:var(--bad);font-size:15px;font-weight:600}
+.big small.ok{color:var(--ok);font-weight:700}.big small.warn{color:var(--warn);font-weight:700}
 .empty{text-align:center;color:var(--muted);padding:40px 10px}
 @media (max-width:360px){.grid{grid-template-columns:repeat(2,1fr)} header{padding:8px 12px;gap:6px} header h1{font-size:14px} .datebox{padding:4px 6px} .datebox input{font-size:15px;width:7.9em} main{padding-left:12px;padding-right:12px}}
 @media (min-width:600px){.grid{grid-template-columns:repeat(4,1fr)}}
