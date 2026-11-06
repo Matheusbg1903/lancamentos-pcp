@@ -1,6 +1,6 @@
 /* Lançamentos PCP — coleta de produção em campo (offline-first) */
 'use strict';
-const VERSAO = '1.2.0';
+const VERSAO = '1.3.0';
 const MESES = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const CABECALHO = ['Data','Mês','Setor','Produto','Turno','Qtde.'];   // Kg Processado e Tipo: a planilha calcula
 const SETORES_OCULTOS = ['OFFSET'];                                     // não usado no levantamento
@@ -92,7 +92,9 @@ async function pedirPersistencia(){ if(persistPedido) return; persistPedido=true
 
 /* ---------- interface ---------- */
 function toast(msg,err){ const h=$('#toastHost'); h.innerHTML='<div class="toast'+(err?' err':'')+'">'+esc(msg)+'</div>'; clearTimeout(toast.t); toast.t=setTimeout(()=>h.innerHTML='',err?4000:1800); }
-function fecharSheet(){ $('#sheetHost').innerHTML=''; }
+let recarregarPendente=false;
+function recarregarQuandoLivre(){ if($('.sheet')) recarregarPendente=true; else location.reload(); }
+function fecharSheet(){ $('#sheetHost').innerHTML=''; if(recarregarPendente) location.reload(); }
 function abrirSheet(html,onMount){ const h=$('#sheetHost'); h.innerHTML='<div class="sheet-bg"><div class="sheet" role="dialog">'+html+'</div></div>';
   const bg=$('.sheet-bg',h); bg.addEventListener('click',ev=>{ if(ev.target===bg) fecharSheet(); }); onMount && onMount($('.sheet',h)); }
 
@@ -150,30 +152,35 @@ function telaLancar(){
   return h+'</div>';
 }
 
+// Revisar mostra só os lançamentos do dia selecionado no topo (data do levantamento)
 function telaRevisar(){
   if(!entries.length) return '<div class="empty">Nenhum lançamento ainda.<br><br><button class="btn" data-goto="lancar">Começar a lançar</button></div>';
-  const dup=mapaDup(); const nDup=entries.filter(e=>dup[chaveDup(e)]>1).length;
-  const datas=[...new Set(entries.map(e=>e.data))].sort();
-  const nQuebra=entries.filter(quebraSequencia).length;
-  let h='<div class="card stack"><div><b>'+entries.length+'</b> lançamento(s) · '+(datas.length>1?'datas':'data')+': <b>'+datas.map(d=>diaSemana(d).slice(0,3)+' '+fmtData(d)).join(', ')+'</b></div>';
-  h+='<div class="row"><button class="btn sec" data-act="dataTodos">Alterar data de todos</button></div>';
+  const dia=meta.dataLev, doDiaSel=entries.filter(e=>e.data===dia);
+  const contDias={}; for(const e of entries) contDias[e.data]=(contDias[e.data]||0)+1;
+  const datas=Object.keys(contDias); if(!datas.includes(dia)) datas.push(dia); datas.sort();
+  const nomeDia=d=>diaSemana(d).slice(0,3)+' '+fmtCurta(d);
+  let h='';
+  if(datas.length>1) h+='<div class="crumbs">'+datas.map(d=>'<button class="chip'+(d===dia?' sel':'')+'" data-dia="'+d+'">'+esc(nomeDia(d))+' <b>'+(contDias[d]||0)+'</b></button>').join('')+'</div>';
+  if(!doDiaSel.length) return h+'<div class="empty">Nenhum lançamento em '+esc(diaSemana(dia))+', '+fmtData(dia)+'.'+(entries.length?'<br>Os outros dias estão nos botões acima.':'')+'</div>';
+  const dup=mapaDup(); const nDup=doDiaSel.filter(e=>dup[chaveDup(e)]>1).length;
+  const nQuebra=doDiaSel.filter(quebraSequencia).length;
+  h+='<div class="card stack"><div><b>'+doDiaSel.length+'</b> lançamento(s) de <b>'+esc(diaSemana(dia))+', '+fmtData(dia)+'</b>'+(entries.length>doDiaSel.length?'<div class="muted">'+(entries.length-doDiaSel.length)+' lançamento(s) de outros dias neste levantamento</div>':'')+'</div>';
+  h+='<button class="btn sec" data-act="moverDia">Mudar a data destes '+doDiaSel.length+' lançamento(s)</button>';
   if(nDup) h+='<button class="btn sec" data-act="soDup">'+(soDup?'Mostrar todos':'⚠ Ver possíveis duplicidades ('+nDup+')')+'</button>';
   if(nQuebra) h+='<div class="notice" style="margin:0">'+nQuebra+' lançamento(s) com etiqueta anterior diferente da registrada no turno anterior. Confira os marcados em vermelho.</div>';
   h+='</div>';
-  const lista=entries.filter(e=>!soDup || dup[chaveDup(e)]>1).slice();
+  const lista=doDiaSel.filter(e=>!soDup || dup[chaveDup(e)]>1);
   const ordS=s=>{ const i=CAD.setores.indexOf(s); return i<0?999:i; }, ordT=t=>{ const i=CAD.turnos.indexOf(t); return i<0?9:i; };
-  lista.sort((a,b)=>a.data.localeCompare(b.data)||ordS(a.setor)-ordS(b.setor)||norm(a.produto).localeCompare(norm(b.produto))||ordT(a.turno)-ordT(b.turno)||a.criadoEm-b.criadoEm);
+  lista.sort((a,b)=>ordS(a.setor)-ordS(b.setor)||norm(a.produto).localeCompare(norm(b.produto))||ordT(a.turno)-ordT(b.turno)||a.criadoEm-b.criadoEm);
   let g='';
   for(const e of lista){
-    const gk=(datas.length>1?diaSemana(e.data).slice(0,3)+' '+fmtData(e.data)+' · ':'')+e.setor;
-    if(gk!==g){ h+='<div class="group">'+esc(gk)+'</div>'; g=gk; }
+    if(e.setor!==g){ h+='<div class="group">'+esc(e.setor)+'</div>'; g=e.setor; }
     const isDup=dup[chaveDup(e)]>1, quebra=quebraSequencia(e);
     h+='<button class="entry'+(isDup?' dup':'')+'" data-edit="'+e.id+'"><div class="top"><div class="name">'+esc(e.produto)+'</div><div class="qty">'+fmtNum(e.qtde)+'</div></div><div class="meta">'+
       '<span class="badge b-info">'+esc(e.turno)+'</span>'+
       (e.etqAtual!=null?'<span>etiq. '+fmtNum(e.etqAnt)+' → '+fmtNum(e.etqAtual)+'</span>':'')+
       (quebra?'<span class="badge b-bad">anterior registrada: '+fmtNum(quebra.numero)+'</span>':'')+
-      (isDup?'<span class="badge b-warn">possível duplicidade</span>':'')+(foraDaLista(e.setor,e.produto)?'<span class="badge b-info">fora da lista</span>':'')+
-      (e.data!==meta.dataLev?'<span class="badge b-info">'+fmtData(e.data)+'</span>':'')+'</div>'+
+      (isDup?'<span class="badge b-warn">possível duplicidade</span>':'')+(foraDaLista(e.setor,e.produto)?'<span class="badge b-info">fora da lista</span>':'')+'</div>'+
       (e.obs?'<div class="obs">Obs.: '+esc(e.obs)+'</div>':'')+'</button>';
   }
   return h;
@@ -183,7 +190,8 @@ function quebraSequencia(e){ if(e.etqAtual==null || !usaEtiqueta(e.turno)) retur
 
 function telaExportar(){
   const n=entries.length, nObs=entries.filter(e=>e.obs||foraDaLista(e.setor,e.produto)).length;
-  let h='<div class="card stack"><div><b>'+n+'</b> lançamento(s) prontos para exportar.</div>'+
+  const porDia={}; for(const e of entries) porDia[e.data]=(porDia[e.data]||0)+1;
+  let h='<div class="card stack"><div><b>'+n+'</b> lançamento(s) prontos para exportar'+(Object.keys(porDia).length>1?' — todos os dias: '+Object.keys(porDia).sort().map(d=>diaSemana(d).slice(0,3)+' '+fmtCurta(d)+' ('+porDia[d]+')').join(', '):'')+'.</div>'+
     '<div class="muted">Colunas: '+CABECALHO.join(' · ')+' (Kg e Tipo ficam por conta da planilha)</div>';
   if(nObs) h+='<div class="muted">'+nObs+' lançamento(s) com observação ou item fora da lista: no Excel eles aparecem também na aba “Observações”.</div>';
   h+='<button class="btn" data-act="xlsx" '+(n?'':'disabled')+'>⬇ Baixar Excel (.xlsx)</button>'+
@@ -209,6 +217,7 @@ function ligar(v){
   v.querySelectorAll('[data-prod]').forEach(b=>b.onclick=()=>{ meta.produto=b.dataset.prod; salvarMeta(); render(); scrollTo(0,0); });
   v.querySelectorAll('[data-turno]').forEach(b=>b.onclick=()=>sheetLancar(b.dataset.turno));
   v.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>sheetEditar(b.dataset.edit));
+  v.querySelectorAll('[data-dia]').forEach(b=>b.onclick=()=>{ meta.dataLev=b.dataset.dia; soDup=false; salvarMeta(); render(); scrollTo(0,0); });
   v.querySelectorAll('[data-goto]').forEach(b=>b.onclick=()=>{ tab=b.dataset.goto; render(); });
   const bs=$('#busca',v); if(bs) bs.oninput=()=>{ busca=bs.value; const q=norm(busca); v.querySelectorAll('#lista [data-prod]').forEach(b=>b.hidden=!!q && !b.dataset.search.includes(q)); };
   if(bs && busca) bs.oninput();
@@ -221,7 +230,7 @@ const acoes={
   trocaProduto(){ meta.produto=null; salvarMeta(); render(); },
   outro(){ sheetOutro(meta.setor, p=>{ meta.produto=p; salvarMeta(); render(); scrollTo(0,0); }); },
   soDup(){ soDup=!soDup; render(); },
-  dataTodos(){ sheetDataTodos(); },
+  moverDia(){ sheetMoverDia(); },
   xlsx(){ exportar('xlsx'); }, csv(){ exportar('csv'); }, share(){ exportar('xlsx',true); },
   backup(){ baixar(new Blob([JSON.stringify({app:'lancamentos-pcp',versao:VERSAO,geradoEm:new Date().toISOString(),meta,entries},null,1)],{type:'application/json'}), 'Backup_Lancamentos_'+meta.dataLev+'_'+horaArq()+'.json'); },
   restaurar(){ $('#fBackup').click(); },
@@ -240,13 +249,8 @@ function arquivarEtiquetas(lista){
   meta.etiquetas=Object.values(porChave).flatMap(l=>l.sort((a,b)=>ordem(b.data,b.turno).localeCompare(ordem(a.data,a.turno))).slice(0,10));
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; soDup=false; render(); scrollTo(0,0); });
-$('#dataLev').onchange=ev=>{ const nv=ev.target.value; if(!nv){ ev.target.value=meta.dataLev; return; }
-  const antiga=meta.dataLev; const nAnt=entries.filter(e=>e.data===antiga).length;
-  meta.dataLev=nv; salvarMeta();
-  if(nAnt) abrirSheet('<h3>Data alterada para '+fmtData(nv)+'</h3><p class="muted">Existem '+nAnt+' lançamento(s) com a data '+fmtData(antiga)+'. O que fazer com eles?</p><div class="stack"><button class="btn" id="sNovos">Manter '+fmtData(antiga)+' neles — a nova data vale só para os próximos</button><button class="btn sec" id="sTodos">Mudar todos para '+fmtData(nv)+'</button></div>',s=>{
-    $('#sTodos',s).onclick=async()=>{ for(const e of entries) if(e.data===antiga){ e.data=nv; } marcarAlterado(); await salvarTudo(); fecharSheet(); render(); toast('Data aplicada a todos'); };
-    $('#sNovos',s).onclick=()=>{ fecharSheet(); render(); }; });
-  else render(); };
+// Data no topo = dia em que se está trabalhando: novos lançamentos e a tela Revisar usam esse dia
+$('#dataLev').onchange=ev=>{ const nv=ev.target.value; if(!nv){ ev.target.value=meta.dataLev; return; } meta.dataLev=nv; soDup=false; salvarMeta(); render(); };
 window.addEventListener('online',render); window.addEventListener('offline',render);
 
 function marcarAlterado(){ if(meta.ultimoExport) meta.alteradoAposExport=true; }
@@ -368,11 +372,12 @@ function sheetEditar(id){
   };
   montar();
 }
-function sheetDataTodos(){
-  abrirSheet('<h3>Alterar data de todos os lançamentos</h3><label class="f">Nova data</label><input class="field" type="date" id="nd" value="'+meta.dataLev+'">'+
-    '<div class="row" style="margin-top:14px"><button class="btn sec" id="c">Cancelar</button><button class="btn" id="ok">Aplicar a '+entries.length+'</button></div>',s=>{
+function sheetMoverDia(){
+  const de=meta.dataLev, lst=entries.filter(e=>e.data===de);
+  abrirSheet('<h3>Mudar a data dos lançamentos de '+fmtData(de)+'</h3><p class="muted">'+lst.length+' lançamento(s) passam para a nova data. Os lançamentos de outros dias não mudam.</p><label class="f">Nova data</label><input class="field" type="date" id="nd" value="'+de+'">'+
+    '<div class="row" style="margin-top:14px"><button class="btn sec" id="c">Cancelar</button><button class="btn" id="ok">Mudar '+lst.length+'</button></div>',s=>{
       $('#c',s).onclick=fecharSheet;
-      $('#ok',s).onclick=async()=>{ const v=$('#nd',s).value; if(!v) return; entries.forEach(e=>e.data=v); meta.dataLev=v; marcarAlterado(); await salvarTudo(); fecharSheet(); render(); toast('Data alterada para '+fmtData(v)); }; });
+      $('#ok',s).onclick=async()=>{ const v=$('#nd',s).value; if(!v||v===de){ fecharSheet(); return; } lst.forEach(e=>e.data=v); meta.dataLev=v; marcarAlterado(); await salvarTudo(); fecharSheet(); render(); toast(lst.length+' lançamento(s) movido(s) para '+fmtData(v)); }; });
 }
 
 /* ---------- exportação ---------- */
@@ -449,5 +454,10 @@ async function importarCadastro(file){ if(!file) return;
 /* ---------- início ---------- */
 (async()=>{
   await carregar(); render();
-  if('serviceWorker' in navigator){ try{ await navigator.serviceWorker.register('sw.js'); }catch(_){} }
+  if('serviceWorker' in navigator){
+    // Quando uma versão nova termina de instalar, recarrega sozinho (os lançamentos já estão salvos no aparelho)
+    const tinhaVersao=!!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{ if(!tinhaVersao) return; recarregarQuandoLivre(); });
+    try{ await navigator.serviceWorker.register('sw.js'); }catch(_){}
+  }
 })();
