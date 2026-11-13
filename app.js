@@ -1,6 +1,6 @@
 /* Lançamentos PCP — coleta de produção em campo (offline-first) */
 'use strict';
-const VERSAO = '1.4.0';
+const VERSAO = '1.5.0';
 const MESES_GUARDAR = 2;   // lançamentos já exportados com data mais antiga que isso são apagados do aparelho
 const MESES = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const CABECALHO = ['Data','Mês','Setor','Produto','Turno','Qtde.'];   // Kg Processado e Tipo: a planilha calcula
@@ -199,7 +199,7 @@ function telaRevisar(){
     const isDup=dup[chaveDup(e)]>1, quebra=quebraSequencia(e);
     h+='<button class="entry'+(isDup?' dup':'')+'" data-edit="'+e.id+'"><div class="top"><div class="name">'+esc(e.produto)+'</div><div class="qty">'+fmtNum(e.qtde)+'</div></div><div class="meta">'+
       '<span class="badge b-info">'+esc(e.turno)+'</span>'+
-      (e.etqAtual!=null?'<span>etiq. '+fmtNum(e.etqAnt)+' → '+fmtNum(e.etqAtual)+'</span>':'')+
+      (e.etqAtual!=null?(e.novaOP?'<span class="badge b-info">nova OP</span><span>'+(e.etqFimOP!=null?'etiq. '+fmtNum(e.etqAnt)+' → '+fmtNum(e.etqFimOP)+' + nova 0 → '+fmtNum(e.etqAtual):'etiq. 0 → '+fmtNum(e.etqAtual))+'</span>':'<span>etiq. '+fmtNum(e.etqAnt)+' → '+fmtNum(e.etqAtual)+'</span>'):'')+
       (quebra?'<span class="badge b-bad">anterior registrada: '+fmtNum(quebra.numero)+'</span>':'')+
       (isDup?'<span class="badge b-warn">possível duplicidade</span>':'')+(foraDaLista(e.setor,e.produto)?'<span class="badge b-info">fora da lista</span>':'')+(e.exportadoEm!=null?'<span class="badge b-ok">exportado</span>':'')+'</div>'+
       (e.obs?'<div class="obs">Obs.: '+esc(e.obs)+'</div>':'')+'</button>';
@@ -207,7 +207,8 @@ function telaRevisar(){
   return h;
 }
 // Etiqueta anterior do lançamento não bate com a última etiqueta registrada no turno anterior
-function quebraSequencia(e){ if(e.etqAtual==null || !usaEtiqueta(e.turno)) return null; const r=anteriorDe(e.setor,e.produto,e.data,e.turno,e.id); return r && r.numero!==e.etqAnt ? r : null; }
+function quebraSequencia(e){ if(e.etqAtual==null || !usaEtiqueta(e.turno)) return null; if(e.novaOP && e.etqFimOP==null) return null;   // OP nova sem sobra da anterior: não há sequência a conferir
+  const r=anteriorDe(e.setor,e.produto,e.data,e.turno,e.id); return r && r.numero!==e.etqAnt ? r : null; }
 
 function telaExportar(){
   const n=entries.length, nObs=entries.filter(e=>e.obs||foraDaLista(e.setor,e.produto)).length;
@@ -289,7 +290,10 @@ function camposQtde(turno,ini,ref,direto){
     return '<label class="f" for="fAnt">Última etiqueta do turno anterior</label>'+
       '<input class="field" id="fAnt" type="text" inputmode="numeric" autocomplete="off" value="'+esc(ant)+'" style="font-size:20px;font-weight:700">'+
       '<div class="muted" id="fRef">'+(ref ? 'Registrada no '+esc(descRef(ref))+': '+fmtNum(ref.numero)+(ini.etqAnt!=null && ini.etqAnt!==ref.numero?' — <button type="button" class="link" id="usarRef">usar '+fmtNum(ref.numero)+'</button>':'') : 'Sem registro anterior deste produto — digite a última etiqueta do turno anterior.')+'</div>'+
-      '<label class="f" for="fAtual">Última etiqueta deste turno</label>'+
+      '<label class="opBox"><input type="checkbox" id="fNova"'+(ini.novaOP?' checked':'')+'><span><b>Nova OP</b> — a numeração recomeçou neste turno</span></label>'+
+      '<div id="fNovaBox"'+(ini.novaOP?'':' hidden')+'><label class="f" for="fFim">Última etiqueta da OP encerrada neste turno <span class="muted">(deixe vazio se ela já tinha terminado antes)</span></label>'+
+      '<input class="field" id="fFim" type="text" inputmode="numeric" autocomplete="off" value="'+esc(ini.etqFimOP??'')+'" style="font-size:20px;font-weight:700"></div>'+
+      '<label class="f" for="fAtual" id="fAtualLbl">'+(ini.novaOP?'Última etiqueta da nova OP':'Última etiqueta deste turno')+'</label>'+
       '<input class="qty-in" id="fAtual" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done" value="'+esc(ini.etqAtual??'')+'">'+
       '<div class="calc" id="fCalc"></div>';
   }
@@ -299,18 +303,28 @@ function camposQtde(turno,ini,ref,direto){
 function ligarQtde(s,turno,ref,direto){
   const etq=usaEtiqueta(turno) && !direto;
   const soDig=el=>el && el.addEventListener('input',()=>{ el.value=el.value.replace(/\D/g,''); atualizar(); });
-  const ant=$('#fAnt',s), atual=$('#fAtual',s), q=$('#fQ',s), calc=$('#fCalc',s);
+  const ant=$('#fAnt',s), atual=$('#fAtual',s), q=$('#fQ',s), calc=$('#fCalc',s), nova=$('#fNova',s), fim=$('#fFim',s);
   function ler(){
-    if(!etq){ const n=inteiro(q.value); return n && n>0 ? {ok:true,qtde:n,etqAnt:null,etqAtual:null} : {ok:false,msg:'Informe uma quantidade maior que zero'}; }
+    if(!etq){ const n=inteiro(q.value); return n && n>0 ? {ok:true,qtde:n,etqAnt:null,etqAtual:null,novaOP:false,etqFimOP:null} : {ok:false,msg:'Informe uma quantidade maior que zero'}; }
     const a=inteiro(ant.value), b=inteiro(atual.value);
+    if(nova.checked){
+      // Nova OP: a numeração recomeçou do zero. Qtde = o que faltou da OP encerrada (se terminou neste turno) + etiquetas da nova OP
+      const f=inteiro(fim.value);
+      if(b==null || b<=0) return {ok:false,msg:'Informe a última etiqueta da nova OP'};
+      if(f!=null){ if(a==null) return {ok:false,msg:'Informe a última etiqueta do turno anterior'}; if(f<a) return {ok:false,msg:'A última etiqueta da OP encerrada não pode ser menor que a do turno anterior ('+fmtNum(a)+')'}; }
+      return {ok:true,qtde:(f!=null?f-a:0)+b,etqAnt:a,etqAtual:b,novaOP:true,etqFimOP:f};
+    }
     if(a==null) return {ok:false,msg:'Informe a última etiqueta do turno anterior'};
     if(b==null) return {ok:false,msg:'Informe a última etiqueta deste turno'};
-    if(b<=a) return {ok:false,msg:'A etiqueta deste turno precisa ser maior que a anterior ('+fmtNum(a)+')'};
-    return {ok:true,qtde:b-a,etqAnt:a,etqAtual:b};
+    if(b<=a) return {ok:false,msg:'A etiqueta deste turno precisa ser maior que a anterior ('+fmtNum(a)+'). Se começou uma OP nova, marque “Nova OP”.'};
+    return {ok:true,qtde:b-a,etqAnt:a,etqAtual:b,novaOP:false,etqFimOP:null};
   }
   function atualizar(){ if(!calc) return; const r=ler();
-    calc.innerHTML = r.ok ? fmtNum(r.etqAtual)+' − '+fmtNum(r.etqAnt)+' = <b>'+fmtNum(r.qtde)+'</b> caixas' : (inteiro(atual.value)!=null ? '<span class="err">'+esc(r.msg)+'</span>' : '&nbsp;'); }
-  soDig(ant); soDig(atual); soDig(q);
+    let conta='';
+    if(r.ok) conta = r.novaOP ? (r.etqFimOP!=null ? '('+fmtNum(r.etqFimOP)+' − '+fmtNum(r.etqAnt)+') + '+fmtNum(r.etqAtual) : 'Nova OP: '+fmtNum(r.etqAtual)+' etiquetas') : fmtNum(r.etqAtual)+' − '+fmtNum(r.etqAnt);
+    calc.innerHTML = r.ok ? conta+' = <b>'+fmtNum(r.qtde)+'</b> caixas' : (inteiro(atual.value)!=null ? '<span class="err">'+esc(r.msg)+'</span>' : '&nbsp;'); }
+  soDig(ant); soDig(atual); soDig(q); soDig(fim);
+  if(nova) nova.onchange=()=>{ $('#fNovaBox',s).hidden=!nova.checked; $('#fAtualLbl',s).textContent=nova.checked?'Última etiqueta da nova OP':'Última etiqueta deste turno'; atualizar(); atual.focus(); };
   const ur=$('#usarRef',s); if(ur) ur.onclick=()=>{ ant.value=ref.numero; ur.remove(); atualizar(); };
   atualizar();
   const foco = q || (ant.value==='' ? ant : atual);
@@ -331,7 +345,7 @@ function sheetLancar(turno){
       $('#tObs',s).onclick=()=>{ obs.hidden=false; $('#tObs',s).hidden=true; obs.focus(); };
       $('#cancel',s).onclick=fecharSheet;
       const salvar=async()=>{ const r=c.ler(); if(!r.ok){ toast(r.msg,true); return; }
-        const e={id:uid(), data:meta.dataLev, setor, turno, produto, qtde:r.qtde, etqAnt:r.etqAnt, etqAtual:r.etqAtual, obs:obs.value.trim(), criadoEm:Date.now()};
+        const e={id:uid(), data:meta.dataLev, setor, turno, produto, qtde:r.qtde, etqAnt:r.etqAnt, etqAtual:r.etqAtual, novaOP:r.novaOP, etqFimOP:r.etqFimOP, obs:obs.value.trim(), criadoEm:Date.now()};
         try{ entries.push(e); marcarAlterado(); await salvarEntry(e); await salvarMeta(); pedirPersistencia(); }
         catch(err){ toast('ERRO ao salvar: '+err.message,true); return; }
         fecharSheet(); render(); toast('Salvo: '+turno+' — '+fmtNum(r.qtde)+' cx'); };
@@ -359,13 +373,13 @@ function sheetOutro(setor,onPick){
 function opcoes(lista,sel){ return lista.map(x=>'<option'+(x===sel?' selected':'')+'>'+esc(x)+'</option>').join(''); }
 function sheetEditar(id){
   const e=entries.find(x=>x.id===id); if(!e) return;
-  const d={data:e.data,setor:e.setor,turno:e.turno,produto:e.produto,qtde:e.qtde,etqAnt:e.etqAnt??null,etqAtual:e.etqAtual??null,obs:e.obs||'',direto:usaEtiqueta(e.turno)&&e.etqAtual==null};
+  const d={data:e.data,setor:e.setor,turno:e.turno,produto:e.produto,qtde:e.qtde,etqAnt:e.etqAnt??null,etqAtual:e.etqAtual??null,novaOP:!!e.novaOP,etqFimOP:e.etqFimOP??null,obs:e.obs||'',direto:usaEtiqueta(e.turno)&&e.etqAtual==null};
   const montar=()=>{
     const prods=(CAD.porSetor[d.setor]||[]).slice(); if(!prods.some(p=>norm(p)===norm(d.produto))) prods.unshift(d.produto);
     const sets=setoresVisiveis(); if(!sets.includes(d.setor)) sets.unshift(d.setor);
     const ref=anteriorDe(d.setor,d.produto,d.data,d.turno,e.id);
     const modoEtq=usaEtiqueta(d.turno)&&!d.direto;
-    const ini=modoEtq ? {etqAnt:d.etqAnt,etqAtual:d.etqAtual} : {qtde:d.qtde};
+    const ini=modoEtq ? {etqAnt:d.etqAnt,etqAtual:d.etqAtual,novaOP:d.novaOP,etqFimOP:d.etqFimOP} : {qtde:d.qtde};
     abrirSheet('<h3>Editar lançamento</h3>'+
       '<label class="f">Data</label><input class="field" type="date" id="eD" value="'+d.data+'">'+
       '<div class="row"><div><label class="f">Setor</label><select class="field" id="eS">'+opcoes(sets,d.setor)+'</select></div>'+
@@ -378,7 +392,7 @@ function sheetEditar(id){
       '<button class="btn danger" id="eX" style="margin-top:10px">Excluir lançamento</button>', s=>{
         const c=ligarQtde(s,d.turno,ref,d.direto);
         const lerBase=()=>{ d.data=$('#eD',s).value||d.data; d.setor=$('#eS',s).value; d.produto=$('#eP',s).value; d.obs=$('#eO',s).value;
-          if(modoEtq){ d.etqAnt=inteiro($('#fAnt',s).value); d.etqAtual=inteiro($('#fAtual',s).value); } else d.qtde=inteiro($('#fQ',s).value); };
+          if(modoEtq){ d.etqAnt=inteiro($('#fAnt',s).value); d.etqAtual=inteiro($('#fAtual',s).value); d.novaOP=$('#fNova',s).checked; d.etqFimOP=inteiro($('#fFim',s).value); } else d.qtde=inteiro($('#fQ',s).value); };
         const remontar=()=>{ lerBase(); montar(); };
         $('#eD',s).onchange=remontar; $('#eP',s).onchange=remontar;
         $('#eT',s).onchange=()=>{ lerBase(); const novo=$('#eT',s).value;
@@ -390,7 +404,7 @@ function sheetEditar(id){
         $('#eOutro',s).onclick=()=>{ lerBase(); sheetOutro(d.setor,p=>{ d.produto=p; montar(); }); };
         $('#eC',s).onclick=fecharSheet;
         $('#eSv',s).onclick=async()=>{ lerBase(); const r=c.ler(); if(!r.ok){ toast(r.msg,true); return; }
-          Object.assign(e,{data:d.data,setor:d.setor,turno:d.turno,produto:d.produto,qtde:r.qtde,etqAnt:r.etqAnt,etqAtual:r.etqAtual,obs:d.obs.trim(),exportadoEm:null}); marcarAlterado();
+          Object.assign(e,{data:d.data,setor:d.setor,turno:d.turno,produto:d.produto,qtde:r.qtde,etqAnt:r.etqAnt,etqAtual:r.etqAtual,novaOP:!!r.novaOP,etqFimOP:r.etqFimOP??null,obs:d.obs.trim(),exportadoEm:null}); marcarAlterado();
           try{ await salvarEntry(e); await salvarMeta(); }catch(err){ toast('ERRO ao salvar: '+err.message,true); return; }
           fecharSheet(); render(); toast('Alteração salva'); };
         $('#eX',s).onclick=()=>confirmar('Excluir “'+e.produto+'” ('+e.turno+', '+e.qtde+')?','Sim, excluir',async()=>{

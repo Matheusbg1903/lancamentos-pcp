@@ -1,5 +1,5 @@
 /* Service worker: guarda o app no aparelho para funcionar sem internet */
-const VERSAO = '1.4.0';
+const VERSAO = '1.5.0';
 const REVISAO = 1;   // muda quando só o service worker precisa reinstalar
 const CACHE = 'pcp-lancamentos-v' + VERSAO + '-r' + REVISAO;
 const ARQUIVOS = ['./', 'index.html', 'app.js?v=' + VERSAO, 'cadastro.js?v=' + VERSAO, 'vendor/xlsx.full.min.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
