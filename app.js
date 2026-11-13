@@ -1,6 +1,7 @@
 /* Lançamentos PCP — coleta de produção em campo (offline-first) */
 'use strict';
-const VERSAO = '1.3.0';
+const VERSAO = '1.4.0';
+const MESES_GUARDAR = 2;   // lançamentos já exportados com data mais antiga que isso são apagados do aparelho
 const MESES = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
 const CABECALHO = ['Data','Mês','Setor','Produto','Turno','Qtde.'];   // Kg Processado e Tipo: a planilha calcula
 const SETORES_OCULTOS = ['OFFSET'];                                     // não usado no levantamento
@@ -85,8 +86,22 @@ async function carregar(){
   delete meta.turno;                                   // versão 1.1 guardava o turno na navegação
   if(meta.setor && SETORES_OCULTOS.includes(meta.setor)){ meta.setor=null; meta.produto=null; }
   entries.sort((a,b)=>a.criadoEm-b.criadoEm);
-  if(!entries.length) meta.dataLev = ontem();
+  // v1.4: marca como exportados os lançamentos que já estavam no último arquivo gerado
+  if(!meta.migrouExport14){ if(meta.ultimoExport) for(const e of entries) if(e.exportadoEm==null && e.criadoEm<=meta.ultimoExport) e.exportadoEm=meta.ultimoExport; meta.migrouExport14=true; await salvarTudo(); }
+  // Data padrão = ontem, a cada novo dia em que o app é aberto
+  if(meta.diaAbertura!==hoje()){ meta.dataLev=ontem(); meta.diaAbertura=hoje(); }
+  await limparAntigos();
 }
+// Data limite: hoje menos MESES_GUARDAR meses
+function dataLimite(){ const d=new Date(); d.setMonth(d.getMonth()-MESES_GUARDAR); return isoDe(d); }
+let avisoLimpeza='';
+async function limparAntigos(){
+  const lim=dataLimite();
+  const velhos=entries.filter(e=>e.data<lim && e.exportadoEm!=null);
+  if(velhos.length){ arquivarEtiquetas(velhos); const ids=new Set(velhos.map(e=>e.id)); entries=entries.filter(e=>!ids.has(e.id)); await salvarTudo();
+    avisoLimpeza=velhos.length+' lançamento(s) já exportado(s) com mais de '+MESES_GUARDAR+' meses foram apagados do aparelho.'; }
+}
+function pendentes(lista){ return lista.filter(e=>e.exportadoEm==null); }
 let persistPedido=false;
 async function pedirPersistencia(){ if(persistPedido) return; persistPedido=true; try{ if(navigator.storage && navigator.storage.persist) await navigator.storage.persist(); }catch(_){} }
 
@@ -107,6 +122,9 @@ function render(){
   if(meta.dataLev>hoje()) avisos.push('Atenção: a data escolhida ('+fmtData(meta.dataLev)+') é no futuro.');
   else if(meta.dataLev===hoje()) avisos.push('Atenção: a data escolhida é hoje, e não o dia anterior.');
   if(!navigator.onLine) avisos.push('Sem conexão — tudo continua sendo salvo no aparelho.');
+  if(avisoLimpeza){ avisos.push(avisoLimpeza); avisoLimpeza=''; }
+  const nVelhoPend=entries.filter(e=>e.data<dataLimite() && e.exportadoEm==null).length;
+  if(nVelhoPend) avisos.push(nVelhoPend+' lançamento(s) com mais de '+MESES_GUARDAR+' meses ainda não foram exportados. Exporte-os para que possam ser apagados automaticamente.');
   $('#notice').innerHTML = '<div class="diaLev">Produção de <b>'+diaSemana(meta.dataLev).replace(/^./,c=>c.toUpperCase())+', '+fmtData(meta.dataLev)+'</b></div>' + avisos.map(a=>'<div class="notice">'+esc(a)+'</div>').join('');
   const v=$('#view');
   if(tab==='lancar') v.innerHTML=telaLancar(); else if(tab==='revisar') v.innerHTML=telaRevisar(); else v.innerHTML=telaExportar();
@@ -160,11 +178,14 @@ function telaRevisar(){
   const datas=Object.keys(contDias); if(!datas.includes(dia)) datas.push(dia); datas.sort();
   const nomeDia=d=>diaSemana(d).slice(0,3)+' '+fmtCurta(d);
   let h='';
-  if(datas.length>1) h+='<div class="crumbs">'+datas.map(d=>'<button class="chip'+(d===dia?' sel':'')+'" data-dia="'+d+'">'+esc(nomeDia(d))+' <b>'+(contDias[d]||0)+'</b></button>').join('')+'</div>';
+  const chips=datas.slice(-10); if(!chips.includes(dia)) chips.push(dia); chips.sort();
+  if(datas.length>1) h+='<div class="crumbs">'+(datas.length>chips.length?'<span class="chip ghost">use a data no topo para dias mais antigos</span>':'')+chips.map(d=>'<button class="chip'+(d===dia?' sel':'')+'" data-dia="'+d+'">'+esc(nomeDia(d))+' <b>'+(contDias[d]||0)+'</b></button>').join('')+'</div>';
   if(!doDiaSel.length) return h+'<div class="empty">Nenhum lançamento em '+esc(diaSemana(dia))+', '+fmtData(dia)+'.'+(entries.length?'<br>Os outros dias estão nos botões acima.':'')+'</div>';
   const dup=mapaDup(); const nDup=doDiaSel.filter(e=>dup[chaveDup(e)]>1).length;
   const nQuebra=doDiaSel.filter(quebraSequencia).length;
   h+='<div class="card stack"><div><b>'+doDiaSel.length+'</b> lançamento(s) de <b>'+esc(diaSemana(dia))+', '+fmtData(dia)+'</b>'+(entries.length>doDiaSel.length?'<div class="muted">'+(entries.length-doDiaSel.length)+' lançamento(s) de outros dias neste levantamento</div>':'')+'</div>';
+  const nPend=pendentes(doDiaSel).length;
+  h+='<div class="muted">'+(nPend?nPend+' pendente(s) de exportar':'Todos já exportados')+'</div>';
   h+='<button class="btn sec" data-act="moverDia">Mudar a data destes '+doDiaSel.length+' lançamento(s)</button>';
   if(nDup) h+='<button class="btn sec" data-act="soDup">'+(soDup?'Mostrar todos':'⚠ Ver possíveis duplicidades ('+nDup+')')+'</button>';
   if(nQuebra) h+='<div class="notice" style="margin:0">'+nQuebra+' lançamento(s) com etiqueta anterior diferente da registrada no turno anterior. Confira os marcados em vermelho.</div>';
@@ -180,7 +201,7 @@ function telaRevisar(){
       '<span class="badge b-info">'+esc(e.turno)+'</span>'+
       (e.etqAtual!=null?'<span>etiq. '+fmtNum(e.etqAnt)+' → '+fmtNum(e.etqAtual)+'</span>':'')+
       (quebra?'<span class="badge b-bad">anterior registrada: '+fmtNum(quebra.numero)+'</span>':'')+
-      (isDup?'<span class="badge b-warn">possível duplicidade</span>':'')+(foraDaLista(e.setor,e.produto)?'<span class="badge b-info">fora da lista</span>':'')+'</div>'+
+      (isDup?'<span class="badge b-warn">possível duplicidade</span>':'')+(foraDaLista(e.setor,e.produto)?'<span class="badge b-info">fora da lista</span>':'')+(e.exportadoEm!=null?'<span class="badge b-ok">exportado</span>':'')+'</div>'+
       (e.obs?'<div class="obs">Obs.: '+esc(e.obs)+'</div>':'')+'</button>';
   }
   return h;
@@ -190,9 +211,11 @@ function quebraSequencia(e){ if(e.etqAtual==null || !usaEtiqueta(e.turno)) retur
 
 function telaExportar(){
   const n=entries.length, nObs=entries.filter(e=>e.obs||foraDaLista(e.setor,e.produto)).length;
-  const porDia={}; for(const e of entries) porDia[e.data]=(porDia[e.data]||0)+1;
-  let h='<div class="card stack"><div><b>'+n+'</b> lançamento(s) prontos para exportar'+(Object.keys(porDia).length>1?' — todos os dias: '+Object.keys(porDia).sort().map(d=>diaSemana(d).slice(0,3)+' '+fmtCurta(d)+' ('+porDia[d]+')').join(', '):'')+'.</div>'+
+  const nDias=new Set(entries.map(e=>e.data)).size, nPend=pendentes(entries).length;
+  let h='<div class="card stack"><div><b>'+n+'</b> lançamento(s) em '+nDias+' dia(s) · <b>'+nPend+'</b> pendente(s) de exportar.</div>'+
+    '<div class="muted">Ao exportar, você escolhe quais dias entram no arquivo.</div>'+
     '<div class="muted">Colunas: '+CABECALHO.join(' · ')+' (Kg e Tipo ficam por conta da planilha)</div>';
+  h+='<div class="muted">Lançamentos já exportados com data de mais de '+MESES_GUARDAR+' meses são apagados do aparelho automaticamente.</div>';
   if(nObs) h+='<div class="muted">'+nObs+' lançamento(s) com observação ou item fora da lista: no Excel eles aparecem também na aba “Observações”.</div>';
   h+='<button class="btn" data-act="xlsx" '+(n?'':'disabled')+'>⬇ Baixar Excel (.xlsx)</button>'+
      '<button class="btn sec" data-act="csv" '+(n?'':'disabled')+'>⬇ Baixar CSV (.csv)</button>';
@@ -250,7 +273,7 @@ function arquivarEtiquetas(lista){
 }
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{ tab=b.dataset.tab; soDup=false; render(); scrollTo(0,0); });
 // Data no topo = dia em que se está trabalhando: novos lançamentos e a tela Revisar usam esse dia
-$('#dataLev').onchange=ev=>{ const nv=ev.target.value; if(!nv){ ev.target.value=meta.dataLev; return; } meta.dataLev=nv; soDup=false; salvarMeta(); render(); };
+$('#dataLev').onchange=ev=>{ const nv=ev.target.value; if(!nv){ ev.target.value=meta.dataLev; return; } meta.dataLev=nv; meta.diaAbertura=hoje(); soDup=false; salvarMeta(); render(); };
 window.addEventListener('online',render); window.addEventListener('offline',render);
 
 function marcarAlterado(){ if(meta.ultimoExport) meta.alteradoAposExport=true; }
@@ -260,8 +283,8 @@ function confirmar(msg,ok,fn){ abrirSheet('<h3>Confirmar</h3><p>'+esc(msg)+'</p>
 
 /* ---------- campos de quantidade (etiqueta ou direta) ---------- */
 // Monta os campos conforme o turno. Retorna função que lê os valores e valida.
-function camposQtde(turno,ini,ref){
-  if(usaEtiqueta(turno)){
+function camposQtde(turno,ini,ref,direto){
+  if(usaEtiqueta(turno) && !direto){
     const ant = ini.etqAnt!=null ? ini.etqAnt : (ref ? ref.numero : '');
     return '<label class="f" for="fAnt">Última etiqueta do turno anterior</label>'+
       '<input class="field" id="fAnt" type="text" inputmode="numeric" autocomplete="off" value="'+esc(ant)+'" style="font-size:20px;font-weight:700">'+
@@ -270,13 +293,15 @@ function camposQtde(turno,ini,ref){
       '<input class="qty-in" id="fAtual" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done" value="'+esc(ini.etqAtual??'')+'">'+
       '<div class="calc" id="fCalc"></div>';
   }
+  if(direto && usaEtiqueta(turno)) return '<label class="f" for="fQ">Quantidade (caixas) — lançamento sem etiqueta</label><input class="qty-in" id="fQ" type="text" inputmode="numeric" autocomplete="off" value="'+esc(ini.qtde??'')+'"><button type="button" class="link" id="usarEtq">Calcular pela etiqueta</button>';
   return '<label class="f" for="fQ">Quantidade (caixas)</label><input class="qty-in" id="fQ" type="text" inputmode="numeric" autocomplete="off" enterkeyhint="done" value="'+esc(ini.qtde??'')+'">';
 }
-function ligarQtde(s,turno,ref){
+function ligarQtde(s,turno,ref,direto){
+  const etq=usaEtiqueta(turno) && !direto;
   const soDig=el=>el && el.addEventListener('input',()=>{ el.value=el.value.replace(/\D/g,''); atualizar(); });
   const ant=$('#fAnt',s), atual=$('#fAtual',s), q=$('#fQ',s), calc=$('#fCalc',s);
   function ler(){
-    if(!usaEtiqueta(turno)){ const n=inteiro(q.value); return n && n>0 ? {ok:true,qtde:n,etqAnt:null,etqAtual:null} : {ok:false,msg:'Informe uma quantidade maior que zero'}; }
+    if(!etq){ const n=inteiro(q.value); return n && n>0 ? {ok:true,qtde:n,etqAnt:null,etqAtual:null} : {ok:false,msg:'Informe uma quantidade maior que zero'}; }
     const a=inteiro(ant.value), b=inteiro(atual.value);
     if(a==null) return {ok:false,msg:'Informe a última etiqueta do turno anterior'};
     if(b==null) return {ok:false,msg:'Informe a última etiqueta deste turno'};
@@ -334,36 +359,38 @@ function sheetOutro(setor,onPick){
 function opcoes(lista,sel){ return lista.map(x=>'<option'+(x===sel?' selected':'')+'>'+esc(x)+'</option>').join(''); }
 function sheetEditar(id){
   const e=entries.find(x=>x.id===id); if(!e) return;
-  const d={data:e.data,setor:e.setor,turno:e.turno,produto:e.produto,qtde:e.qtde,etqAnt:e.etqAnt??null,etqAtual:e.etqAtual??null,obs:e.obs||''};
+  const d={data:e.data,setor:e.setor,turno:e.turno,produto:e.produto,qtde:e.qtde,etqAnt:e.etqAnt??null,etqAtual:e.etqAtual??null,obs:e.obs||'',direto:usaEtiqueta(e.turno)&&e.etqAtual==null};
   const montar=()=>{
     const prods=(CAD.porSetor[d.setor]||[]).slice(); if(!prods.some(p=>norm(p)===norm(d.produto))) prods.unshift(d.produto);
     const sets=setoresVisiveis(); if(!sets.includes(d.setor)) sets.unshift(d.setor);
     const ref=anteriorDe(d.setor,d.produto,d.data,d.turno,e.id);
-    const ini=usaEtiqueta(d.turno) ? {etqAnt:d.etqAnt,etqAtual:d.etqAtual} : {qtde:d.qtde};
+    const modoEtq=usaEtiqueta(d.turno)&&!d.direto;
+    const ini=modoEtq ? {etqAnt:d.etqAnt,etqAtual:d.etqAtual} : {qtde:d.qtde};
     abrirSheet('<h3>Editar lançamento</h3>'+
       '<label class="f">Data</label><input class="field" type="date" id="eD" value="'+d.data+'">'+
       '<div class="row"><div><label class="f">Setor</label><select class="field" id="eS">'+opcoes(sets,d.setor)+'</select></div>'+
       '<div><label class="f">Turno</label><select class="field" id="eT">'+opcoes(CAD.turnos,d.turno)+'</select></div></div>'+
       '<label class="f">Produto</label><select class="field" id="eP">'+opcoes(prods,d.produto)+'</select><button class="link" id="eOutro">Escolher outro item…</button>'+
       (foraDaLista(d.setor,d.produto)?'<div><span class="badge b-info">fora da lista do setor</span></div>':'')+
-      camposQtde(d.turno,ini,ref)+
+      camposQtde(d.turno,ini,ref,d.direto)+
       '<label class="f">Observação</label><textarea class="field" id="eO">'+esc(d.obs)+'</textarea>'+
       '<div class="row" style="margin-top:14px"><button class="btn sec" id="eC">Cancelar</button><button class="btn ok" id="eSv">Salvar</button></div>'+
       '<button class="btn danger" id="eX" style="margin-top:10px">Excluir lançamento</button>', s=>{
-        const c=ligarQtde(s,d.turno,ref);
+        const c=ligarQtde(s,d.turno,ref,d.direto);
         const lerBase=()=>{ d.data=$('#eD',s).value||d.data; d.setor=$('#eS',s).value; d.produto=$('#eP',s).value; d.obs=$('#eO',s).value;
-          if(usaEtiqueta(d.turno)){ d.etqAnt=inteiro($('#fAnt',s).value); d.etqAtual=inteiro($('#fAtual',s).value); } else d.qtde=inteiro($('#fQ',s).value); };
+          if(modoEtq){ d.etqAnt=inteiro($('#fAnt',s).value); d.etqAtual=inteiro($('#fAtual',s).value); } else d.qtde=inteiro($('#fQ',s).value); };
         const remontar=()=>{ lerBase(); montar(); };
         $('#eD',s).onchange=remontar; $('#eP',s).onchange=remontar;
         $('#eT',s).onchange=()=>{ lerBase(); const novo=$('#eT',s).value;
           if(usaEtiqueta(novo)!==usaEtiqueta(d.turno)){ if(usaEtiqueta(novo)){ d.etqAnt=null; d.etqAtual=null; } else d.qtde=(d.etqAtual!=null&&d.etqAnt!=null)?d.etqAtual-d.etqAnt:d.qtde; }
           if(usaEtiqueta(novo) && !usaEtiqueta(d.turno)) d.etqAnt=null;
-          d.turno=novo; montar(); };
+          d.turno=novo; d.direto=false; montar(); };
+        const ue=$('#usarEtq',s); if(ue) ue.onclick=()=>{ lerBase(); d.direto=false; d.etqAnt=null; d.etqAtual=null; montar(); };
         $('#eS',s).onchange=()=>{ lerBase(); const lst=CAD.porSetor[d.setor]||[]; if(!lst.some(p=>norm(p)===norm(d.produto))) d.produto=lst[0]||d.produto; montar(); };
         $('#eOutro',s).onclick=()=>{ lerBase(); sheetOutro(d.setor,p=>{ d.produto=p; montar(); }); };
         $('#eC',s).onclick=fecharSheet;
         $('#eSv',s).onclick=async()=>{ lerBase(); const r=c.ler(); if(!r.ok){ toast(r.msg,true); return; }
-          Object.assign(e,{data:d.data,setor:d.setor,turno:d.turno,produto:d.produto,qtde:r.qtde,etqAnt:r.etqAnt,etqAtual:r.etqAtual,obs:d.obs.trim()}); marcarAlterado();
+          Object.assign(e,{data:d.data,setor:d.setor,turno:d.turno,produto:d.produto,qtde:r.qtde,etqAnt:r.etqAnt,etqAtual:r.etqAtual,obs:d.obs.trim(),exportadoEm:null}); marcarAlterado();
           try{ await salvarEntry(e); await salvarMeta(); }catch(err){ toast('ERRO ao salvar: '+err.message,true); return; }
           fecharSheet(); render(); toast('Alteração salva'); };
         $('#eX',s).onclick=()=>confirmar('Excluir “'+e.produto+'” ('+e.turno+', '+e.qtde+')?','Sim, excluir',async()=>{
@@ -377,18 +404,18 @@ function sheetMoverDia(){
   abrirSheet('<h3>Mudar a data dos lançamentos de '+fmtData(de)+'</h3><p class="muted">'+lst.length+' lançamento(s) passam para a nova data. Os lançamentos de outros dias não mudam.</p><label class="f">Nova data</label><input class="field" type="date" id="nd" value="'+de+'">'+
     '<div class="row" style="margin-top:14px"><button class="btn sec" id="c">Cancelar</button><button class="btn" id="ok">Mudar '+lst.length+'</button></div>',s=>{
       $('#c',s).onclick=fecharSheet;
-      $('#ok',s).onclick=async()=>{ const v=$('#nd',s).value; if(!v||v===de){ fecharSheet(); return; } lst.forEach(e=>e.data=v); meta.dataLev=v; marcarAlterado(); await salvarTudo(); fecharSheet(); render(); toast(lst.length+' lançamento(s) movido(s) para '+fmtData(v)); }; });
+      $('#ok',s).onclick=async()=>{ const v=$('#nd',s).value; if(!v||v===de){ fecharSheet(); return; } lst.forEach(e=>{ e.data=v; e.exportadoEm=null; }); meta.dataLev=v; marcarAlterado(); await salvarTudo(); fecharSheet(); render(); toast(lst.length+' lançamento(s) movido(s) para '+fmtData(v)); }; });
 }
 
 /* ---------- exportação ---------- */
 function horaArq(){ const d=new Date(); return String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0'); }
 function serialExcel(iso){ const [y,m,d]=iso.split('-').map(Number); return Math.round((Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000); }
-function linhas(){
-  return entries.slice().sort((a,b)=>a.data.localeCompare(b.data)||a.criadoEm-b.criadoEm)
+function linhas(lista){
+  return lista.slice().sort((a,b)=>a.data.localeCompare(b.data)||a.criadoEm-b.criadoEm)
     .map(e=>({e, data:e.data, mes:mesDe(e.data), setor:e.setor, produto:e.produto, turno:e.turno, qtde:e.qtde}));
 }
-function gerarXlsx(){
-  const L=linhas(); const wb=XLSX.utils.book_new();
+function gerarXlsx(lista){
+  const L=linhas(lista); const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet([CABECALHO, ...L.map(r=>[null,r.mes,r.setor,r.produto,r.turno,r.qtde])]);
   L.forEach((r,i)=>{ ws['A'+(i+2)]={t:'n',v:serialExcel(r.data),z:'dd/mm/yyyy'}; });
   ws['!cols']=[{wch:11},{wch:6},{wch:8},{wch:48},{wch:11},{wch:7}];
@@ -404,20 +431,47 @@ function gerarXlsx(){
   return new Blob([out],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }
 function csvCampo(v){ const s=String(v??''); return /[;"\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; }
-function gerarCsv(){
-  const rows=[CABECALHO, ...linhas().map(r=>[fmtData(r.data),r.mes,r.setor,r.produto,r.turno,r.qtde])];
+function gerarCsv(lista){
+  const rows=[CABECALHO, ...linhas(lista).map(r=>[fmtData(r.data),r.mes,r.setor,r.produto,r.turno,r.qtde])];
   return new Blob(['﻿'+rows.map(r=>r.map(csvCampo).join(';')).join('\r\n')+'\r\n'],{type:'text/csv;charset=utf-8'});
 }
 function baixar(blob,nome){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nome; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },4000); }
-async function exportar(tipo,compartilhar){
+
+// Pergunta quais dias entram no arquivo. Já vêm marcados os dias com lançamentos pendentes de exportar.
+function exportar(tipo,compartilhar){
+  const porDia={}; for(const e of entries) (porDia[e.data]=porDia[e.data]||[]).push(e);
+  const dias=Object.keys(porDia).sort().reverse();
+  const sel=new Set(dias.filter(d=>pendentes(porDia[d]).length));
+  const nomeTipo=tipo==='xlsx'?'Excel':'CSV';
+  const linhaDia=d=>{ const l=porDia[d], p=pendentes(l).length;
+    return '<label class="diaOpt"><input type="checkbox" data-d="'+d+'"'+(sel.has(d)?' checked':'')+'><span class="dTxt"><b>'+esc(diaSemana(d).slice(0,3))+' '+fmtData(d)+'</b><small>'+l.length+' lanç.</small></span>'+
+      (p?'<i class="badge b-warn">'+(p===l.length?'pendente':p+' pendente(s)')+'</i>':'<i class="badge b-ok">exportado</i>')+'</label>'; };
+  abrirSheet('<h3>Quais dias exportar?</h3><div class="muted">Vêm marcados os dias com lançamentos ainda não exportados.</div>'+
+    '<div class="row" style="margin:10px 0"><button class="btn sec mini" id="xPend">Pendentes</button><button class="btn sec mini" id="xTodos">Todos</button><button class="btn sec mini" id="xNenhum">Nenhum</button></div>'+
+    '<div class="diasLista">'+dias.map(linhaDia).join('')+'</div>'+
+    '<div class="row" style="margin-top:12px"><button class="btn sec" id="xC">Cancelar</button><button class="btn" id="xOk"></button></div>', s=>{
+      const boxes=[...s.querySelectorAll('[data-d]')], ok=$('#xOk',s);
+      const atualizar=()=>{ const n=boxes.filter(b=>b.checked).reduce((a,b)=>a+porDia[b.dataset.d].length,0); ok.textContent=n?'Exportar '+n+' ('+nomeTipo+')':'Escolha um dia'; ok.disabled=!n; };
+      boxes.forEach(b=>b.onchange=atualizar);
+      $('#xPend',s).onclick=()=>{ boxes.forEach(b=>b.checked=pendentes(porDia[b.dataset.d]).length>0); atualizar(); };
+      $('#xTodos',s).onclick=()=>{ boxes.forEach(b=>b.checked=true); atualizar(); };
+      $('#xNenhum',s).onclick=()=>{ boxes.forEach(b=>b.checked=false); atualizar(); };
+      $('#xC',s).onclick=fecharSheet;
+      ok.onclick=()=>{ const ds=boxes.filter(b=>b.checked).map(b=>b.dataset.d).sort(); fecharSheet(); gerarArquivo(tipo,compartilhar,ds); };
+      atualizar(); });
+}
+async function gerarArquivo(tipo,compartilhar,dias){
   try{
-    const nome='Lancamentos_PCP_'+meta.dataLev+'_'+horaArq()+'.'+tipo;
-    const blob= tipo==='xlsx'?gerarXlsx():gerarCsv();
+    const set=new Set(dias), lista=entries.filter(e=>set.has(e.data));
+    const nome='Lancamentos_PCP_'+dias[0]+(dias.length>1?'_a_'+dias[dias.length-1]:'')+'_'+horaArq()+'.'+tipo;
+    const blob= tipo==='xlsx'?gerarXlsx(lista):gerarCsv(lista);
     if(compartilhar){ const f=new File([blob],nome,{type:blob.type});
       if(navigator.canShare && navigator.canShare({files:[f]})){ await navigator.share({files:[f],title:nome}); } else { baixar(blob,nome); } }
     else baixar(blob,nome);
-    meta.ultimoExport=Date.now(); meta.alteradoAposExport=false; meta.exportCount=(meta.exportCount||0)+1; await salvarMeta(); render();
-    toast('Arquivo gerado: '+nome);
+    const agora=Date.now(); lista.forEach(e=>e.exportadoEm=agora);
+    meta.ultimoExport=agora; meta.alteradoAposExport=pendentes(entries).length>0; meta.exportCount=(meta.exportCount||0)+1;
+    await salvarTudo(); await limparAntigos(); render();
+    toast('Arquivo gerado: '+lista.length+' lançamento(s)');
   }catch(err){ if(err && err.name==='AbortError') return; toast('Falha na exportação: '+(err.message||err),true); }
 }
 

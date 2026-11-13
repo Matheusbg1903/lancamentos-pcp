@@ -85,6 +85,11 @@ textarea.field{min-height:70px;resize:vertical}
 .calc{margin-top:8px;text-align:center;font-size:18px;min-height:26px}.calc b{font-size:24px;color:var(--ok)}
 .err{color:var(--bad);font-size:15px;font-weight:600}
 .big small.ok{color:var(--ok);font-weight:700}.big small.warn{color:var(--warn);font-weight:700}
+.diasLista{display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto}
+.diaOpt{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--bg)}
+.diaOpt input{width:24px;height:24px;flex:none;accent-color:var(--pri)}
+.dTxt{flex:1;display:flex;flex-direction:column}.dTxt small{color:var(--muted)}
+.btn.mini{padding:10px 6px;font-size:14px}
 .empty{text-align:center;color:var(--muted);padding:40px 10px}
 @media (max-width:360px){.grid{grid-template-columns:repeat(2,1fr)} header{padding:8px 12px;gap:6px} header h1{font-size:14px} .datebox{padding:4px 6px} .datebox input{font-size:15px;width:7.9em} main{padding-left:12px;padding-right:12px}}
 @media (min-width:600px){.grid{grid-template-columns:repeat(4,1fr)}}
@@ -105,7 +110,7 @@ textarea.field{min-height:70px;resize:vertical}
 <div id="sheetHost"></div>
 <div id="toastHost"></div>
 <script src="vendor/xlsx.full.min.js"></script>
-<script src="cadastro.js?v=1.3.0"></script>
-<script src="app.js?v=1.3.0"></script>
+<script src="cadastro.js?v=1.4.0"></script>
+<script src="app.js?v=1.4.0"></script>
 </body>
 </html>
